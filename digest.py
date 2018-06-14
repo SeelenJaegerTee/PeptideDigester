@@ -1,11 +1,47 @@
 import os
 import datetime
 from io import *
+import logging
 
 
 class Config:
     DEBUG = True
-    CHUNK_SIZE = 65535
+    CHUNK_SIZE = 65535      # 2^16 -1 just in case
+
+
+class Setup:
+    __already_executed = False
+
+    def __init__(self, input_path='.', scan_subfolders=False):
+        if Setup.__already_executed is False:
+            Setup.files_index = []
+            input_path.replace('\\', '/')
+            if input_path == '.' or input_path == '':
+                input_path = (os.getcwd()+'\\').replace('\\', '/')
+            elif input_path[-1] != '/':
+                input_path += '/'
+
+            def scan_folder(path):              # inner function because ...
+                for f in os.listdir(path):
+                    if os.path.isfile(path+f):
+                        Setup.files_index.append(path+f)
+                    elif f != '.idea' and f != 'output':
+                        if scan_subfolders is True:         # ... we may want to do recursion ...
+                            scan_folder(path+f+'/')
+
+            scan_folder(input_path)             # ... at this point
+            logging.basicConfig(filename='logfile.log', level=logging.DEBUG)
+            logging.info('Setup initiated: '+str(datetime.datetime.now()))
+            Setup.__already_executed = True
+        else:
+            logging.warning('warning, tried to execute setup twice')
+
+    def extract_filetype(self, file_ending):
+        ret = []
+        for f in Setup.files_index:
+            if file_ending in f:
+                ret.append(f)
+        return ret
 
 
 # can provide lines from the file by buffering a large chunk of the file
@@ -23,10 +59,11 @@ class ChunkProvider:
 
         self.line = 0
         self.chunk_pos = 0
-        self.read_chunk()
+        self.read_chunk(Config.CHUNK_SIZE)
 
     def read_chunk(self, chunk_size=Config.CHUNK_SIZE):
-        # if Config.DEBUG: print('before call self.chunk_buffer', repr(self.chunk_buffer))
+        if Config.DEBUG is True:
+            logging.debug('reading chunk from position '+str(self.pos)+' onward ('+str(Config.CHUNK_SIZE)+') bytes')
         if not self.EOF_reached:
             with open(self.file_path) as fp:
                 fp.seek(self.pos)
@@ -37,37 +74,40 @@ class ChunkProvider:
                 if self.pos == fp.seek(0, SEEK_END):
                     self.EOF_reached = True
                     if Config.DEBUG is True:
-                        print('EOF reached')
+                        logging.debug('EOF reached')
                 # we need to reset the filepointer to where it was
                 fp.seek(self.pos)
         else:
             self.chunk_buffer = ''
             if Config.DEBUG is True:
-                print('requested to read chunk despite EOF reached, returning empty string')
-        # if Config.DEBUG: print('after call self.chunk_buffer', repr(self.chunk_buffer))
+                logging.debug('can not load further chunks, reached end of file. Returning empty string')
 
     def next_line(self):
+        if Config.DEBUG:
+            logging.debug('trying to retrieve next line')
         new_line_pos = self.chunk_buffer.find('\n', self.chunk_pos)
-        if Config.DEBUG: print('new_line_pos', new_line_pos)
         if new_line_pos != -1:
             ret = self.chunk_buffer[self.chunk_pos: new_line_pos+1]
             self.line += 1
-            if Config.DEBUG: print('found line')
+            if Config.DEBUG:
+                logging.debug('found line at pos: '+str(self.pos))
             self.chunk_pos = new_line_pos + 1
         elif not self.EOF_reached:
-            if Config.DEBUG: print('still more file to buffer ...')
-            ret = self.chunk_buffer[self.chunk_pos: ]
-            if Config.DEBUG: print('reloading')
+            if Config.DEBUG:
+                logging.debug('found no newline but there is still more file to buffer ...')
+            ret = self.chunk_buffer[self.chunk_pos:]
             self.read_chunk()
             self.chunk_pos = 0
             ret += self.next_line()
         elif not self.file_exhausted:
-            if Config.DEBUG: print('last bit of file already loaded in buffer')
+            if Config.DEBUG:
+                logging.debug('last bit of file already loaded in buffer retrieving until EOF')
             ret = self.chunk_buffer[self.chunk_pos:]
             self.line += 1
             self.file_exhausted = True
         else:
-            if Config.DEBUG: print('finished')
+            if Config.DEBUG:
+                logging.debug('finished, file contents are exhausted. Returning empty string')
             return ''
         return ret
 
@@ -118,9 +158,28 @@ class RestrictionSite:
         self.protease = protease
 
 
-my_file = File('C:/Users/NeugebauerC/Desktop/python kurs/Digester/ins_human.fasta', 'ins_human.fasta')
-my_file.analyze()
-print(my_file.name)
-print(my_file.peptides[0].name)
-print(my_file.peptides[0].sequence)
-print(my_file.peptides[0].amino_acids)
+#########################################
+# Script
+#########################################
+files_index = Setup(scan_subfolders=False).extract_filetype('.fasta')
+print(files_index)
+files = []
+for f in files_index:
+    buff = ''
+    for c in f[::-1]:
+        buff += c
+        if c == '/':
+            buff = buff[:-1]
+            break
+    buff = buff[::-1]
+    print(buff)
+
+    files.append(File(f, buff))
+
+print(files)
+for f in files:
+    print(f.name)
+    f.analyze()
+    for pep in f.peptides:
+        print(pep.name)
+        print(pep.sequence)
